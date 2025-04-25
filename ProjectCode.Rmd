@@ -1,0 +1,1022 @@
+---
+title: "563Project"
+author: "Team Name:  Hackberry Penguins; Team: Weiyi You, Peiyuan Gao"
+date: "2025-04-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+## Data
+
+```{r}
+data <- read.csv("penguins_cleaned.csv") 
+head(data)
+```
+
+```{r}
+data$Island <- as.factor(data$Island)
+data$Sex <- as.factor(data$Sex)
+data$Species <- as.factor(data$Species)
+
+```
+
+```{r}
+summary(data)
+```
+
+```{r}
+#install.packages("summarytools")  # Run if not installed
+library(summarytools)
+```
+
+```{r}
+dfSummary(data)
+```
+
+
+
+# Multivariate Analysis
+
+## Principle Components
+
+### plots showing relationships between variables and multivariate normality
+
+```{r}
+library(corrplot)
+library(PerformanceAnalytics)
+library(heplots)
+library(FactoMineR)
+library(dplyr)
+```
+
+```{r}
+df_PCA <- data[,c("Individual.ID","Species","Island","Culmen_Length","Culmen_Depth","Flipper_Length","Body_Mass","Delta.15.N", "Delta.13.C")]
+levels(df_PCA$Species) <- c("Adelie", "Chinstrap", "Gentoo")
+head(df_PCA)
+```
+
+```{r}
+#look for non-linearity, get correlation, make histograms.
+chart.Correlation(df_PCA[,-c(1,2,3)], main = "Penguin Data")
+```
+Pairwise correlation matrix plot includes:
+
+Correlations
+
+Strong Positive Correlations (Strong Linear Relationships (Positive)):
+Flipper_Length vs Body_Mass: r = 0.88, penguins with longer flippers tend to weigh more — very strong and statistically significant. A tight, upward-trending scatter of points indicates a strong positive linear relationship.
+Culmen_Length vs Flipper_Length: r = 0.65, longer bills correlate with longer flippers. Also shows a relatively straight line trend — good linearity.
+Delta.15.N vs Delta.13.C: r = 0.57, suggests that nitrogen and carbon isotope values tend to vary together, possibly linked to diet. Moderate linear relationship — not as strong as the others, but the points still loosely form a linear cloud.
+
+Negative Correlations (Negative Linear Relationships):
+Culmen_Depth vs Culmen_Length: r = -0.57, longer culmen tends to have shallower depth — interesting morphological trade-off. The downward trend in the scatterplot confirms the negative correlation (r = -0.57 ***). The pattern is linear.
+Culmen_Depth vs Flipper_Length: r = -0.47; 
+Culmen_Depth vs Body_Mass: r = -0.50. These indicate that deeper Culmen(bill) are associated with shorter flippers and lower body mass. Also show negative linearity — as depth increases, body mass and flipper length tend to decrease.
+
+Weak or No Correlation(Non-linear or Weak Relationships):
+Culmen_Length vs Delta.15.N: r = -0.057 (no asterisk)
+No statistically significant relationship here. No visible linear pattern — points are scattered randomly
+
+
+### multivariate normality before transformation
+
+```{r}
+# chi-square quantile plot
+cqplot(df_PCA[,-c(1,2,3)], main = "Penguin Data")
+```
+Chi-Square Q-Q Plot of Mahalanobis Distance is used to assess multivariate normality
+
+Majority of Points Are Close to the Line. A few points toward the right deviate above the line (may be potential multivariate outliers).
+Chi-Square Quantile plots in Figure show that continuous variables in the data set seem to follow a multivariate normal distribution.
+
+### We use QQ plot to check for univariate normality before log transformation.
+```{r}
+# Set up a 3x2 layout (6 plots in total)
+par(mfrow = c(2, 3), mar = c(4, 4, 4, 1))  # Adjust margins as needed
+
+# Loop through the first 10 columns of df2
+for (i in 4:(min(ncol(df_PCA), 15))) {  # Adjust upper limit for fewer columns if needed
+  qqnorm(df_PCA[[i]], main = paste("Q-Q Plot for", colnames(df_PCA)[i]), cex.main = 0.9)
+  qqline(df_PCA[[i]], col = "red")
+}
+
+# Reset plotting layout to default after plotting
+par(mfrow = c(1, 1))
+```
+Q-Q plots provide a clear check of univariate normality for each of the six continuous variables. (Q-Q (quantile-quantile) plots compare the sample quantiles of a variable to the theoretical quantiles of a normal distribution.)
+
+None of six variables show strictly normally distributed. This suggests Log-transform would be applied.
+
+### multivariate normality after log-transform
+```{r}
+levels(df_PCA$Species) <- c("Adelie", "Chinstrap", "Gentoo")
+df_PCA$Culmen_Length_log <- log(df_PCA$Culmen_Length)
+df_PCA$Culmen_Depth_log <- log(df_PCA$Culmen_Depth)
+df_PCA$Flipper_Length_log <- log(df_PCA$Flipper_Length)
+df_PCA$Body_Mass_log <- log(df_PCA$Body_Mass)
+df_PCA$Delta.15.N_log <- log(df_PCA$Delta.15.N)
+
+# ensures all values are positive while preserving the relative structure
+
+# Find the minimum value
+min_val_Delta.13 <- min(df_PCA$Delta.13.C, na.rm = TRUE)
+
+# Shift so the minimum becomes slightly above zero (e.g., 1)
+shift_constant <- abs(min_val_Delta.13) + 1  # e.g., if min is -27.02 → shift by 28.02
+
+# Step 3: Apply log-transform
+df_PCA$Delta.13.C_log <- log(df_PCA$Delta.13.C + shift_constant)
+# df_PCA$Delta.13.Cs_log <- log(df_PCA$Delta.13.C) # negative value
+```
+
+```{r}
+cqplot(df_PCA[,c("Culmen_Length_log", "Culmen_Depth_log", "Flipper_Length_log", "Body_Mass_log","Delta.15.N_log", "Delta.13.C_log")],
+        main = "Penguin Data")
+```
+
+
+After Log Transformation, majority of points lie closer to the red line, especially in the mid-range quantiles. Fewer points deviate strongly in the upper-right tail compared to the previous plot. The outlier at the far upper-right (likely a multivariate outlier) is still present, but its distance is reduced compared to before. Log transformation improved multivariate normality.
+
+
+### principal components
+Perform Principal components analysis using the Correlation matrix (standardized
+variables). Think about how many principal components to retain. To make this
+decision look at:
+• Total variance explained by a given number of principle components. 80% as threshold
+• The ‘eigenvalue > 1’ criteria
+• The ‘scree plot elbow’ method (turn in the scree plot)
+• Parallel Analysis: think about whether this is appropriate based on what you
+discover in question 1.
+
+```{r}
+head(df_PCA)
+```
+
+
+
+```{r}
+#scale. = TRUE means run on the correlation matrix, i.e. standardize the variables.
+pc1 <- prcomp(df_PCA[, 10:15], scale. = TRUE)
+summary(pc1)
+```
+
+```{r}
+summary.PCA.JDRS <- function(x){
+  sum_JDRS <- summary(x)$importance
+  sum_JDRS[1, ] <- sum_JDRS[1, ]^2
+  attr(sum_JDRS, "dimnames")[[1]][1] <- "Eigenvals (Variance)"
+  sum_JDRS
+}
+#print results - 
+#Here are eigenvalues
+round(summary.PCA.JDRS(pc1),2)
+
+
+```
+
+
+```{r}
+screeplot(pc1, type = "lines", col = "red", lwd = 2, pch = 19, cex = 1.2, 
+          main = "Scree Plot of Transformed Penguin Data")
+```
+
+```{r}
+#get function from online
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/parallel.r.txt")
+parallelplot(pc1)
+```
+
+
+We choose 4 methods to decide how many principal components to retain
+• Total variance explained by a given number of principle components. 80% as threshold. The cumulative proportion of variance reaches 88.31% at PC3, cumulative proportion of variance at PC2 reaches 79% would also be good.
+• The ‘eigenvalue > 1’ criteria. PCs 1–2 are clearly above 1
+• The ‘scree plot elbow’ method (turn in the scree plot). Scree plot has elbow at two and three which would argue for retaining 1 or 2 component.
+• Parallel Analysis: based on the chi-square quantile plot of our transformed data, our data shows multivariate normality, we can use can perform parallel analysis. The plot shows PC2 is slightly above the green and blue thresholds. PC3 to PC6 are all below both threshold lines. It supports 2 principal components to be chosen. After consideration in order of least desirable to most desirable. We decided to keep two components
+
+
+```{r}
+#Get loadings
+round(pc1$rotation[, 1:2], 2)
+```
+
+Interpretation of Each Component:  PC1 would be interpreted as “Size vs Trophic Structure” Dimension. High positive loadings: Flipper_Length_log (0.50), Body_Mass_log (0.48), Culmen_Length_log (0.30). High negative loadings: Culmen_Depth_log (-0.41), Delta.15.N_log (-0.40) (used to measure food chain length and the trophic level of a given organism), Delta.13.C_log (widely used for the reconstruction of past diets, particularly to see if marine foods or certain types of plants were consumed.) (-0.31). Interpretation: PC1 separates penguins based on physical size (larger flippers and body mass) vs. bill depth and stable isotope ratios. Penguins with high PC1 scores are physically larger, but lower in trophic level indicators (isotopic values), and shallower bills. Penguins with low PC1 scores may have deeper bills, higher nitrogen and carbon isotope values, and smaller body size.
+
+
+PC2 would be interpreted as “Morpho-Isotopic Axis”. High loadings: Culmen_Length_log (0.66), Delta.13.C_log (0.54), Delta.15.N_log (0.38), and low loadings for others. Interpretation:  PC2 captures variation in bill length and diet (isotope signatures). High PC2 scores indicate penguins with longer bills and higher delta13C/delta15N values — possibly suggesting different foraging behavior or habitat. This component seems to blend morphological and ecological (dietary) information.
+
+
+```{r}
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/ciscoreplot.r.txt")
+# use components 1 and 2, and ID to represent the points
+ciscoreplot(pc1, c(1, 2), df_PCA[, 1])
+#ciscoreplot(pc1, c(1, 2), df_PCA[, 2])
+#ciscoreplot(pc1, c(1, 2), df_PCA[, 3])
+# make a biplot for first two components
+biplot(pc1, choices = c(1, 2), pc.biplot = T, cex = 0.5)
+```
+```{r}
+# exact outlier points
+x = pc1
+comps = c(1, 2)
+namevec = df_PCA[, 1]
+y1<-sqrt(5.99*(x$sdev[comps[1]]^2))
+ymod<-y1-y1%%.05
+y1vec<-c(-y1,seq(-ymod,ymod,by=0.05),y1)
+y2vecpos<-sqrt((5.99-(y1vec^2)/x$sdev[comps[1]]^2)*x$sdev[comps[2]]^2)
+y2vecneg<--sqrt((5.99-(y1vec^2)/x$sdev[comps[1]]^2)*x$sdev[comps[2]]^2)
+y2vecpos[1]<-0
+y2vecneg[1]<-0
+y2vecpos[length(y2vecpos)]<-0
+y2vecneg[length(y2vecneg)]<-0
+outliers<-((x$x[,comps[1]]^2)/(x$sdev[comps[1]]^2)+(x$x[,comps[2]]^2)/(x$sdev[comps[2]]^2))>5.99
+namevec[outliers]
+```
+
+By plots above, the points appear strong or obvious cluster structure which can be clearly separated by PC1 axis (PC1 appears to capture the biggest separation. It might be related to overall body size or morphology, as previously inferred from the loadings.). It suggests components one and two capture distinct size and trophic profiles within the dataset.
+
+Using a 95% confidence ellipse in the PC1 vs. PC2 space can be a quick visual check for potential outliers (and our data basically follows roughly multivariate normal distribution). By PC Score Plot with 95% CI Ellipse, a few labeled points with their Individual.ID (outlier points: "N39A1", "N46A1", "N81A1", "N72A2", "N98A2") are shown as possible outliers or representative samples.
+
+By PCA Biplot, it shows 
+1. Flipper_Length_log and Body_Mass_log are the main vectors in the positive PC1 direction. This suggests that individuals with higher flipper length and body mass will tend to have higher PC1 scores. 
+
+2. Culmen_Length_log also points positively along PC1 (though slightly toward PC2 as well). Individuals with longer culmen lengths also tend to have higher PC1 scores, and higher PC2 value.
+
+3. Culmen_Depth_log, Delta.15.N_log, and Delta.13.C_log arrows point toward the upper left quadrant — i.e., more negatively on PC1 and positively on PC2. Individuals scoring high on these variables tend to have lower PC1 and higher PC2 scores.
+
+
+Variables pointing in the same direction (e.g., Flipper_Length_log and Body_Mass_log) suggest a strong positive correlation in this PC1–PC2 space. Variables pointing in opposite directions (e.g., Flipper_Length_log vs. Culmen_Depth_log) suggest a negative correlation. This aligns with earlier correlation matrix: deeper bills tend to occur with shorter flippers and lighter body mass.
+
+```{r}
+#install.packages("factoextra")  # if not installed
+library(factoextra)
+
+# PCA with factoextra biplot
+fviz_pca_biplot(pc1,
+                label = "var",     # show variable arrows
+                habillage = df_PCA$Species,  # color by species
+                addEllipses = TRUE, 
+                ellipse.level = 0.95,
+                palette = "jco",
+                repel = TRUE,
+                title = "PCA Biplot Colored by Species")
+
+# PCA with factoextra biplot
+fviz_pca_biplot(pc1,
+                label = "var",     # show variable arrows
+                habillage = df_PCA$Island,  # color by species
+                addEllipses = TRUE, 
+                ellipse.level = 0.95,
+                palette = "jco",
+                repel = TRUE,
+                title = "PCA Biplot Colored by Islands")
+```
+
+
+PCA Biplot Colored by Species, The three species of penguins, Adelie (blue), Chinstrap (yellow), and Gentoo (gray) - form clearly separated clusters in the PCA space. The first principal component (PC1) explains 55.8% of the variance and clearly separates: Gentoo penguins with High PC1 scores (far right), Adelie penguins and Chinstrap with Low PC1 scores (far left) and the second principal component (PC2) would be considered used to make separation between Adelie penguins and Chinstrap. Flipper_Length_log and Body_Mass_log point strongly in the PC1 direction, showing Gentoo penguins are larger birds. Delta.15.N_log, Delta.13.C_log, and Culmen_Depth_log point to the upper left, suggesting Chinstrap penguins, indicating higher trophic levels, longer food chains (also from more fishes eat C4 plants) and width bill depth. And for Adelie, Culmen_Length_log point strongly to upper right(high in both PC1 and PC2) suggests they have shorter bill.
+
+Species differences are strongly associated with morphology and diet, and PCA effectively separates species based on these traits.
+Providing a promising result for coming Discriminant Analysis.
+
+
+By PCA Biplot Colored by Island, it doesn't show clear pattern that PC1 and PC2 would clearly separate the islands penguins lives. This may indicates islands have sharing features for penguins to survive. But we do see that Biscoe island does provide penguins lower chance for higher trophic levels, longer food chains. Also, by comparing two colored biplots, we notices Adelie penguins existing in all three islands, while Chinstrap only stay in Dream Island and Gentoo only stay in Biscoe islands.
+
+
+
+
+### summary
+PCA effectively revealed structure in the penguin dataset, with two principal components capturing 79% of the total variance. PC1 represented a “Size vs. Trophic Structure” axis, separating larger-bodied penguins from those with deeper bills and higher isotope values. PC2 reflected variation in bill length and diet. Species were clearly separated in the PCA space, especially along PC1, while island-based grouping showed more overlap. Overall, PCA successfully reduced dimensionality and highlighted key ecological and morphological differences among penguin species.
+
+
+# Discriminant Analysis
+Goal: 
+Discrimination - identify variables that ‘best’ discriminate between three known species and use data on variables from known species to
+develop a rule for classifying future observations.
+
+```{r}
+library(MASS)
+library(biotools)
+library(klaR)
+library(car)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(ggExtra)
+library(heplots)
+library(corrplot)
+library(PerformanceAnalytics)
+```
+
+```{r}
+head(data)
+```
+Discriminant Analysis Assumptions: The observations within each group represent a sample from a
+multivariate normal distribution. The covariance matrices of each group are assumed to be identical.
+
+
+
+```{r}
+# Boxplot
+# Set up the plotting area with multiple panels (2 rows, 3 columns)
+par(mfrow = c(2, 3), mar = c(4, 4, 2, 1))
+levels(data$Species) <- c("Adelie", "Chinstrap", "Gentoo")
+
+# Boxplot for Culmen_Length grouped by Species
+boxplot(Culmen_Length ~ Species, data = data, col = c('red', 'blue', 'green'),
+        main = "Culmen_Length by Species", ylab = "Culmen_Length")
+
+# Boxplot for Culmen_Depth grouped by Species
+boxplot(Culmen_Depth ~ Species, data = data, col = c('red', 'blue', 'green'),
+        main = "Culmen_Depth by Species", ylab = "Culmen_Depth")
+
+# Boxplot for Flipper_Length grouped by Species
+boxplot(Flipper_Length ~ Species, data = data, col = c('red', 'blue', 'green'),
+        main = "Flipper_Length by Species", ylab = "Flipper_Length")
+
+# Boxplot for Body_Mass grouped by Species
+boxplot(Body_Mass ~ Species, data = data, col = c('red', 'blue', 'green'),
+        main = "Body_Mass by Species", ylab = "Body_Mass")
+
+# Boxplot for Delta.15.N grouped by Species
+boxplot(Delta.15.N ~ Species, data = data, col = c('red', 'blue', 'green'),
+        main = "Delta.15.N by Species", ylab = "Delta.15.N")
+
+# Boxplot for Delta.13.C grouped by Species
+boxplot(Delta.13.C ~ Species, data = data, col = c('red', 'blue', 'green'),
+        main = "Delta.13.C by Species", ylab = "Delta.13.C")
+```
+#### chi-square quantile plot
+```{r}
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(data[data$Species  == 'Adelie', c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")], main = "chi-square quantile plot for Adelie Penguin")
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(data[data$Species  == 'Chinstrap', c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")], main = "chi-square quantile plot for Chinstrap penguin")
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(data[data$Species  == 'Gentoo', c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")], main = "chi-square quantile plot for Gentoo penguin")
+```
+
+
+According to chi-square quantile plots of each species, most points are within the 95% range area of the plots. We can conclude that The observations within each group represent a sample from a multivariate normal distribution.
+
+```{r}
+group1_cov <- cov(data[data$Species == 'Adelie', c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")])
+group2_cov <- cov(data[data$Species == 'Chinstrap', c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")])
+group3_cov <- cov(data[data$Species == 'Gentoo', c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")])
+```
+
+```{r}
+cov_rat <- group2_cov/group1_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+```
+
+```{r}
+cov_rat <- group2_cov/group3_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+```
+
+```{r}
+cov_rat <- group1_cov/group3_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+```
+
+
+```{r}
+# Box's M statistic
+boxM(data[,c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")], data$Species)
+```
+Ratios of largest to smallest elements of the covariance matrices are not smaller than 4 (Body_Mass and Delta.13.C when comparing group 2 and group 3) and based on the Box’s M-test, the p-value < 2.2e-16 which is smaller than 0.01 or 0.05, so we reject the null and conclude that there is significant difference between the each pair of groups' covariance matrices. This indicates that we should consider quadratic discrimination functions.
+
+#### pairs plot
+```{r}
+# Assign colors and symbols to each group
+group_colors <- c('red', 'blue', 'green')[data$Species]
+group_symbols <- as.numeric(data$Species) + 14  # Use symbols 15, 16, 17 for each group
+
+# Matrix plot
+pairs(data[,c("Culmen_Length", "Culmen_Depth", "Flipper_Length", "Body_Mass", "Delta.15.N", "Delta.13.C")], 
+      col = group_colors, pch = group_symbols, 
+      main = "Matrix Plot of Variables by Group")
+
+# Add a legend
+legend("topright", legend = c("Group 1", "Group 2", "Group 3"), 
+       col = c('red', 'blue', 'green'), pch = 15:17, title = "Species")
+```
+#### test whether some log-transformation help with make covariance matrices simila
+
+
+
+
+```{r}
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(df_PCA[df_PCA$Species  == 'Adelie', 10:15], main = "chi-square quantile plot for Adelie Penguin")
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(df_PCA[df_PCA$Species  == 'Chinstrap', 10:15], main = "chi-square quantile plot for Chinstrap penguin")
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(df_PCA[df_PCA$Species  == 'Gentoo', 10:15], main = "chi-square quantile plot for Gentoo penguin")
+```
+
+```{r}
+# Box's M statistic
+boxM(df_PCA[,10:15], df_PCA$Species)
+```
+By above plots and Box's M-test, it seems like the transformation won't make covariances matrices to be seem as similar and even make normality worse.
+
+Inclusion, multivariate normality within each group hold and covariance matrices are different between groups, quadratic discrimination functions would be a better choice. Yet since there is not need to force all variables used for discrimination, we can try step-wise LDA first for result. 
+
+#### First, perform step-wise LDA
+```{r}
+# Convert tibble to data frame
+df_PCA <- as.data.frame(df_PCA)
+
+# Stepwise LDA
+# Culmen_Length Culmen_Depth Flipper_Length Body_Mass Delta.15.N Delta.13.C
+step_lda <- stepclass(Species ~ Culmen_Length + Culmen_Depth + Flipper_Length + Body_Mass + Delta.15.N + Delta.13.C, 
+                      data = df_PCA, 
+                      method = "lda", 
+                      direction = "both", 
+                      fold = nrow(df_PCA)) # LOOCV
+
+print(step_lda)
+```
+
+```{r}
+partimat(Species ~ Culmen_Length + Flipper_Length,data=df_PCA,, method="lda", 
+                      direction = "both", 
+                      fold = nrow(df_PCA))
+```
+
+#### Then, perform step-wise QDA
+```{r}
+# Perform stepwise QDA
+step_qda <- stepclass(Species ~ Culmen_Length + Culmen_Depth + Flipper_Length + Body_Mass + Delta.15.N + Delta.13.C, 
+                      data = df_PCA, 
+                      method = "qda", 
+                      direction = "both", 
+                      fold = nrow(df_PCA)) # LOOCV
+
+# Print stepwise QDA results
+print(step_qda)
+```
+
+
+
+```{r}
+# partimat(group ~ hirecall + lirecall,data=df_alz, method="lda")
+partimat(Species ~ Culmen_Length + Flipper_Length , data = df_PCA, method = "qda", 
+                      direction = "both", 
+                      fold = nrow(df_PCA))
+```
+
+
+
+Also, recheck covariance matrices similarity for this two variables.
+```{r}
+group1_cov <- cov(data[data$Species == 'Adelie', c("Culmen_Length", "Flipper_Length")])
+group2_cov <- cov(data[data$Species == 'Chinstrap',  c("Culmen_Length", "Flipper_Length")])
+group3_cov <- cov(data[data$Species == 'Gentoo',  c("Culmen_Length", "Flipper_Length")])
+cov_rat <- group2_cov/group1_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+
+cov_rat <- group1_cov/group3_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+
+cov_rat <- group2_cov/group3_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+```
+Ratios of largest to smallest elements of the covariance matrices are smaller than 4, for this two variables.
+
+
+Both LDA and QDA choose Culmen_Length and Flipper_Length as significant discriminating variables and provides same correctness rate = 0.9537. And after recheck the covariance matrices similarity, both LDA and QDA would be good choice.
+
+### Let's try how DA based on PC works
+```{r}
+pc1 <- prcomp(df_PCA[, 10:15], scale. = TRUE)
+
+# Extract the first k PCs — in your case, all 6
+df_all_pc <- data.frame(pc1$x[, 1:6], Species = df_PCA$Species)
+```
+
+```{r}
+# Box's M statistic
+boxM(df_all_pc[,1:3], df_all_pc$Species)
+```
+
+
+```{r}
+# Stepwise LDA
+# Culmen_Length Culmen_Depth Flipper_Length Body_Mass Delta.15.N Delta.13.C
+step_lda <- stepclass(Species ~ PC1 + PC2 + PC3+ PC4 + PC5 + PC6, 
+                      data = df_all_pc, 
+                      method = "lda", 
+                      direction = "both", 
+                      fold = nrow(df_all_pc)) # LOOCV
+
+print(step_lda)
+```
+
+
+
+
+```{r}
+# Stepwise LDA
+# Culmen_Length Culmen_Depth Flipper_Length Body_Mass Delta.15.N Delta.13.C
+step_qda <- stepclass(Species ~ PC1 + PC2 + PC3+ PC4 + PC5 + PC6, 
+                      data = df_all_pc, 
+                      method = "qda", 
+                      direction = "both", 
+                      fold = nrow(df_all_pc)) # LOOCV
+
+print(step_qda)
+```
+
+
+
+
+```{r}
+# Create data frame with PC1, PC2, and Species
+df_pc_scores <- data.frame(PC1 = pc1$x[,1],
+                           PC2 = pc1$x[,2],
+                           Species = df_PCA$Species)
+
+# Plot partition plots for LDA
+# partimat(Species ~ PC1 + PC2, data = df_pc_scores, method = "lda")
+partimat(Species ~ PC1 + PC2,data=df_pc_scores, method="lda", 
+                      direction = "both", 
+                      fold = nrow(df_pc_scores))
+
+partimat(Species ~ PC1 + PC2,data=df_pc_scores, method="qda", 
+                      direction = "both", 
+                      fold = nrow(df_pc_scores))
+```
+
+
+Basically, based on the stepwise discriminant analysis, the QDA suggest PC1 and PC2 are significant discriminating variable. LDA provides correctness rate of 0.9537,  and qda provides correctness rate of 0.9537. Although Box’s M test indicated differences in covariance matrices among groups, LDA showed better classification performance than QDA in leave-one-out cross-validation, likely due to its lower model complexity and better generalization.
+
+
+In conclusion, using principal components does improve the performance, yet the improvement is relatively low. We still consider to use Culmen_Length and Flipper_Length for discriminant analysis
+
+### whether there is statistical evidence that the multivariate group means are different using the multivariate Wilk’s Lambda test
+```{r}
+data.manova<-manova(as.matrix(df_PCA[,c("Culmen_Length","Flipper_Length")])~ df_PCA$Species) # Species ~ Culmen_Length + Flipper_Length
+summary.manova(data.manova,test= "Wilks")
+```
+p-values < 2.2e-16 which is smaller than 0.05 or 0.01, then we reject the null hypothesis and concludes that the multivariate group means are different while using Culmen_Length and Flipper_Length as discriminators.
+
+
+```{r}
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/discrim.r.txt")
+```
+
+Use LDA with Culmen_Length + Flipper_Length
+
+```{r}
+discriminant.significance(df_PCA[, c("Culmen_Length","Flipper_Length")], df_PCA$Species)
+```
+There are 2 discriminant functions. Both discriminant functions are significant(both p-value<0.05). 
+
+For Test of Function(s) 1 through 2:
+
+The Wilks' Lambda value of 0.0875 indicates that the combination of both functions explains a significant portion of the variance in group separation (smaller values indicate better discrimination). The F-statistic (380.7549) and a very small p-value (0.0000) suggest that the functions jointly are statistically significant (i.e., they help distinguish between species).
+
+For Test of Function 2:
+
+The Wilks' Lambda is 0.3923, indicating that function 2 explains smaller variance than the combination of both functions, yet explains significant portion of the variance in group separation.
+The F-statistic (497.1769) is larger, and the p-value is  statistically significant (p < 0.05), meaning that function 2 does significantly contribute to group separation.
+
+### Provide some evidence as to which of your original variables are the ‘best’ discriminators amongst your groups (look at standardized discriminant coefficients)
+```{r}
+df_scaled <- lda(scale(df_PCA[, c("Culmen_Length","Flipper_Length")]), grouping = df_PCA$Species)  # df_PCA[, c("Culmen_Length","Flipper_Length")], df_PCA$Species
+
+df_scaled
+```
+LD1 (First Discriminant Function) explains 69.21% of the variance, making it the primary function responsible for group separation.
+LD2 (Second Discriminant Function) explains only 30.79% of the variance, contributing relatively smaller to discrimination between groups. This indicates that most of the discriminating power is concentrated in the first function, yet both functions together contributing almost all of the discriminating power.
+
+
+```{r}
+print("Standardized Coefficients")
+# Coefficients of linear discriminants: 
+round(df_scaled$scaling, 2)
+```
+
+Culmen_Length has moderate contribution to LD1, but a strong negative contribution to LD2 — important for separating groups along LD2.
+Flipper_Length has the largest positive influence on both LD1 and LD2 — the strongest overall discriminator between species.
+Flipper_Length is clearly the best overall discriminator — it contributes strongly to both LD1 and LD2. Culmen_Length is important primarily for LD2, but less so for LD1. This aligns with our earlier PCA findings: flipper length (and body size) drives much of the separation, especially for Gentoo penguins, while culmen traits play a bigger role in differentiating Chinstrap and Adelie penguins along LD2.
+
+### standard and CV difference: no difference as concluded
+For LDA,
+```{r}
+# lda(scale(df_PCA[, c("Culmen_Length","Flipper_Length")]), grouping = df_PCA$Species)
+alz_lda <- lda(df_PCA[, c("Culmen_Length","Flipper_Length")],grouping = df_PCA$Species)
+# raw results
+(raw <- table(df_PCA$Species, predict(alz_lda)$class))
+# total percent correct
+round(sum(diag(prop.table(raw))), 2)
+```
+```{r}
+alz_ldaCV<-  lda(df_PCA[, c("Culmen_Length","Flipper_Length")],grouping = df_PCA$Species, CV = TRUE)
+
+#cross validated results
+(CV <- table(df_PCA$Species, alz_ldaCV$class))
+
+# total percent correct
+round(sum(diag(prop.table(CV))), 2)
+```
+
+For QDA,
+```{r}
+alz_qda <- qda(df_PCA[, c("Culmen_Length","Flipper_Length")],grouping = df_PCA$Species)
+# raw results
+(raw <- table(df_PCA$Species, predict(alz_qda)$class))
+# total percent correct
+round(sum(diag(prop.table(raw))), 2)
+```
+
+```{r}
+alz_qdaCV <- qda(df_PCA[, c("Culmen_Length","Flipper_Length")],grouping = df_PCA$Species, CV = TRUE)
+
+#cross validated results
+(CV <- table(df_PCA$Species, alz_qdaCV$class))
+
+# total percent correct
+round(sum(diag(prop.table(CV))), 2)
+```
+
+All four models lda, ldaCV,qda, qdaCV provides same correctness. 
+
+
+### Make score plots for the first two or three DA function scores
+```{r}
+
+# Get LDA scores
+lda_scores <- predict(alz_lda)$x  # Scores for the first two discriminant functions
+levels(df_PCA$Species) <- c("Adelie", "Chinstrap", "Gentoo")
+group_labels <- df_PCA$Species      # Group labels
+
+# Set up colors and symbols for each group
+colors <- c("red", "blue", "green")      # Colors for the groups
+symbols <- c(15, 16, 17)                 # Symbols for each group
+
+# Plot the scores for the first two discriminant functions
+plot(lda_scores[, 1], lda_scores[, 2], 
+     col = colors[group_labels], 
+     pch = symbols[group_labels], 
+     xlab = "Discriminant Function 1 (LD1)", 
+     ylab = "Discriminant Function 2 (LD2)", 
+     main = "Score Plot: Discriminant Functions 1 and 2",cex=1.1)
+
+# Add a legend to differentiate groups
+legend("topright", legend = levels(group_labels),col = colors, pch = symbols, title = "Groups")
+```
+Based on the score plots for the first two DA function scores, it shows that LD1 effectively separates Group 1 (red) from Groups 3 (Gentoo), then with the help of LD2, Adelie and Chinstrap are clearly separated. The distinct clustering of groups suggests that LDA is highly effective in classifying these species based on the selected features.
+
+### try kernel smoothing or k-nearest neighbors.
+
+```{r}
+# Create kernel density estimate for 
+# c("Culmen_Length","Flipper_Length")
+kde_result <- kde2d(df_PCA$Culmen_Length, df_PCA$Flipper_Length, n = 100)
+# Contour plot to visualize density
+contour(kde_result, 
+        xlab = "Culmen Length(mm)", 
+        ylab = "Flipper Length(mm)", 
+        main = "Contour Plot of Culmen Length vs Flipper Length")
+
+# Add group points to the plot
+points(df_PCA$Culmen_Length, df_PCA$Flipper_Length, col = as.numeric(df_PCA$Species), pch = 19)
+legend("topright", legend = levels(df_PCA$Species), col = 1:3, pch = 19)
+
+# Image plot with color gradient for density
+image(kde_result, 
+      xlab = "Culmen Length(mm)", 
+      ylab = "Flipper Length(mm)", 
+      main = "Image Plot of 2D Kernel Density")
+
+# Add points for each observation
+points(df_PCA$Culmen_Length, df_PCA$Flipper_Length, col = as.numeric(df_PCA$Species), pch = 19)
+legend("topright", legend = levels(df_PCA$Species), col = 1:3, pch = 19)
+
+
+# Perspective (3D surface) plot
+persp(kde_result, 
+      xlab = "Culmen Length(mm)", 
+      ylab = "Flipper Length(mm)",  
+      zlab = "Density", 
+      theta = 30, phi = 20, 
+      main = "Perspective Plot of Culmen Length vs Flipper Length")
+
+
+
+```
+
+The KDE plots visually reinforce what I found in LDA
+
+Choose the kernel smoothing with bandwidths calculated based on Silverman's Rule of Thumb. Above Contour, Perspective, and Image plots show:
+
+Culmen length and flipper length provide excellent discrimination of all three species. Culmen length and flipper length provide excellent discrimination of Gentoo penguins from the other two species, but we also notice these variables offer limited separation between Adelie and Chinstrap.
+
+All in all, Culmen length and flipper length would be best two variables when considering making discrimination of all three species. However, if we have all the data, use Principle Components in Discriminant Analysis would provider better result.
+
+# MANOVA
+
+Whether geographical environment and sex has effect on penguins' diet and Culmen size
+
+Sex of the penguin may affect their eating habits.
+
+we will use Delta.15.N and Culmen length, Culmen depth as our response variables, and use Island, Sex as our two categorical predictors, with flipper length (body size) as our extra continuous predictor.
+
+
+```{r}
+library(MASS)
+library(biotools)
+library(heplots)
+library(klaR)
+library(car)
+```
+
+
+### make interaction plots
+
+```{r}
+interaction.plot(data$Island, data$Sex, data$Delta.15.N,
+  lwd=3, col=c("red", "blue", "black"), trace.label="Sex", 
+  xlab="Island", main="Interaction Plot for Delta.15.N")
+```
+
+
+```{r}
+interaction.plot(data$Island, data$Sex, data$Culmen_Depth,
+  lwd=3, col=c("red", "blue", "black"), trace.label="Sex", 
+  xlab="Island", main="Interaction Plot for Culmen_Depth")
+```
+
+
+```{r}
+interaction.plot(data$Island, data$Sex, data$Culmen_Length,
+  lwd=3, col=c("red", "blue", "black"), trace.label="Sex", 
+  xlab="Island", main="Interaction Plot for Culmen_Length")
+```
+
+
+
+
+All three plots show parallel trend, which means there may not be interaction effect between Island (geographical environment),Sex for Delta.15.N,  Culmen size. For Delta.15.N, the lines show a sharp increase from Biscoe to Dream and then a slighter decrease for Torgersen, this indicates penguins have higher to lower trophic levels or longer to shorter food chains in Dream, Torgersen, and Biscoe. For Culmen Depth, Torgersen and Dream island's penguins share simlar values and much higher than Biscoe' island's penguins. For Culmen Length, Biscoe and Dream island's penguins share simlar values and much higher than Torgersen' island's penguins.
+Also by all three plots, male penguins shows higher trophic levels, longer food chains(Delta.15.N), bigger culmen(bill) than female penguins.
+
+
+Notice: higher Delta.15.N indicating higher trophic levels, longer food chains (Delta.13.C also indicates they eat more fishes that eat C4 plants)
+
+
+### Two-Way MANOVA for these two categorical factors
+```{r}
+options(contrasts=c("contr.sum", "contr.poly"))
+
+penguinsMAOV <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island*Sex,  
+                data=data)
+
+#Multivariate and univariate results
+summary(Anova(penguinsMAOV, type=3), univariate=T)
+```
+
+Multivariate MANOVA Results:
+Island: Very strong multivariate effect. Island significantly affects the combination of Delta.15.N, Culmen Depth, and Culmen Length.
+Sex: Strong multivariate effect. Penguin sex also significantly affects the combination of traits.
+Island:Sex: No significant interaction. The effect of sex on the traits does not differ across islands.
+
+Both Island and Sex are significant predictors, independently affecting penguin traits. The interaction is not significant, so the effects of Island and Sex are additive, not synergistic.
+
+Univariate ANOVA Results:
+For island, all three traits differ significantly by Island. Island likely reflects environmental variation or geographic isolation that influences penguin morphology and diet (stable isotope).
+For sex, male and female penguins differ significantly in all three traits. This likely reflects sexual dimorphism — males tend to have larger bill and may occupy slightly different foraging niches (reflected in isotope values).
+For Interaction of Island and Sex, no significant interaction effects — the difference between sexes is consistent across islands, and vice versa.
+
+All three traits are influenced by both factors — suggesting that both geographic location and biological sex shape penguin traits.
+
+
+### Perform multivariate and univariate contrasts to compare levels of a particular factor(island here).
+
+
+```{r}
+options(contrasts = c("contr.treatment", "contr.poly"))
+contrasts(data$Island)
+```
+
+
+```{r}
+#penguinsMAOV <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island*Sex,  data=data)
+IslandManova <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island, data = data)
+```
+
+
+```{r}
+linearHypothesis(IslandManova, "IslandDream = 0")
+linearHypothesis(IslandManova, "IslandTorgersen = 0")
+linearHypothesis(IslandManova,"IslandTorgersen - IslandDream=0")
+linearHypothesis(IslandManova,"2*IslandTorgersen-IslandDream=0") # IslandTorgersen vs others
+```
+
+All three contrasts are statistically significant, indicating meaningful morphological or dietary differences (isotopic signatures) among penguins across the different islands.
+This reinforces the earlier full-model MANOVA result showing a strong Island main effect.
+These differences may reflect:
+Geographic isolation
+Habitat-driven food web variation (explaining Delta.15.N)
+Morphological adaptation (explaining culmen traits)
+
+
+```{r}
+#penguinsMAOV <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island*Sex,  data=data)
+IslandManova2 <- lm(cbind(Delta.15.N) ~ Island, data = data)
+
+```
+
+```{r}
+linearHypothesis(IslandManova2, "IslandDream = 0")
+linearHypothesis(IslandManova2, "IslandTorgersen = 0")
+linearHypothesis(IslandManova2,"IslandTorgersen - IslandDream=0")
+linearHypothesis(IslandManova2,"2*IslandTorgersen-IslandDream=0") # IslandTorgersen vs others
+linearHypothesis(IslandManova2,"IslandTorgersen+IslandDream=0")
+```
+Dream vs. Biscoe and Torgersen vs. Biscoe are both highly significant (F = 229.11 and 27.92, respectively; p < 0.001), indicating clear ecological differences in trophic position.
+
+Torgersen vs. Dream (Torgersen - Dream = 0) is also significant (F = 26.79, p < 0.001), confirming distinct foraging niches even between these two smaller islands.
+
+The contrast 2*Torgersen - Dream = 0 (testing if Torgersen differs from the average of the other islands) is not significant (p = 0.9648), suggesting Torgersen sits midway in trophic values between Dream and Biscoe.
+
+The contrast Torgersen + Dream = 0 (i.e., their sum equals Biscoe *2) is highly significant (F = 132.64, p < 0.001), reaffirming that Torgersen and Dream jointly differ from Biscoe.
+
+These tests show that penguins on each island differ in trophic level, with Dream having the highest, Biscoe the lowest, and Torgersen intermediate. This likely reflects differences in local food webs or foraging habitats, supporting the idea of island-specific ecological niches.
+
+
+
+```{r}
+#penguinsMAOV <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island*Sex,  data=data)
+IslandManova3 <- lm(cbind(Culmen_Depth, Culmen_Length) ~ Island, data = data)
+
+```
+
+
+```{r}
+linearHypothesis(IslandManova3, "IslandDream = 0")
+linearHypothesis(IslandManova3, "IslandTorgersen = 0")
+linearHypothesis(IslandManova3,"IslandTorgersen - IslandDream=0")
+linearHypothesis(IslandManova3,"2*IslandTorgersen-IslandDream=0") # IslandTorgersen vs others
+linearHypothesis(IslandManova3,"IslandTorgersen+IslandDream=0")
+```
+
+
+
+```{r}
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(data[data$Island  == 'Biscoe', c('Culmen_Length','Culmen_Depth','Delta.15.N')], main = "chi-square quantile plot for Biscoe")
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(data[data$Island  == 'Dream', c('Culmen_Length','Culmen_Depth','Delta.15.N')], main = "chi-square quantile plot for Dream")
+# par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(data[data$Island  == 'Torgersen', c('Culmen_Length','Culmen_Depth','Delta.15.N')], main = "chi-square quantile plot for Torgersen")
+```
+
+
+
+
+###  add a continuous variable to our model and fit as a multiple-response linear model. Before you fit the model, make some plots to see if there are linear relationships between your covariates and your responses. Discuss your multivariate and univariate results.
+
+# for this continuous choices: (Flipper_Length, Body_Mass, Delta.13.C)
+
+```{r}
+#Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island
+pairs(data[,c("Species","Island","Sex", "Culmen_Depth", "Culmen_Length",  "Flipper_Length","Body_Mass", "Delta.15.N","Delta.13.C")])
+```
+body mass linear increase as flipper_length increase. 
+
+
+```{r}
+#SUPER IMPORTANT - include these options below to get correct Type III sum of squares (partial SS)
+options(contrasts=c("contr.sum", "contr.poly"))
+# #penguinsMAOV <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island*Sex,  data=data)
+# two-way MANOVA with interaction
+DataMod <- lm(cbind(Delta.15.N, Culmen_Depth, Culmen_Length) ~ Island + Sex + Delta.13.C,  
+                data=data)
+#Multivariate and univariate results
+summary(Anova(DataMod, type=3), univariate=T)
+```
+After including Delta.13.C as a covariate in the two-way MANOVA model, the results indicate that all predictors — Island, Sex, and now Delta.13.C — have statistically significant multivariate effects on the response variables: Delta.15.N, Culmen_Depth, and Culmen_Length.
+
+Multivariate Results (MANOVA)
+Island continues to show a strong multivariate effect, suggesting substantial morphological and isotopic differences among islands.
+
+Sex also remains a highly significant predictor, reinforcing evidence of sexual dimorphism.
+
+Delta.13.C is newly added and shows a strong multivariate association with the traits (Pillai = 0.25, F = 35.41, p < 2.22e-16), suggesting that carbon isotope ratios are significantly related to penguin diet and morphology.
+
+The inclusion of Delta.13.C in the model enhances explanatory power by capturing additional ecological variation (e.g., foraging habitat). It remains statistically significant even after accounting for Island and Sex, indicating that carbon isotope ratios provides independent information about variation in penguin traits. Meanwhile, Island and Sex remain robust predictors, with strong effects on both isotopic and morphological traits.
+
+These results highlight the multifactorial nature of trait variation in penguins, shaped by geography (Island), biology (Sex), and ecology (carbon isotope ratios diet signatures).
+
+###  Check model assumptions by making a chi-square quantile plot of the residuals.
+
+```{r}
+# let's check our residuals
+cqplot(DataMod$residuals, label="Residuals from penguins")
+```
+Based on the chi-square quantile plot of the residuals above, the original residuals from the multiple-response linear model seems follows the multivariate normality which ensures that the assumption for MANOVA is hold.
+
+
+### run MRPP tests on some form of your data
+```{r}
+library(vegan)
+set.seed(123)
+continuous_vars <- data[, c("Culmen_Length",
+                   "Culmen_Depth",
+                   "Flipper_Length", 
+                   "Body_Mass",  
+                   "Delta.15.N",
+                   "Delta.13.C")]
+
+
+```
+```{r}
+mrpp1 <- mrpp(continuous_vars, data$Island)
+print(mrpp1)
+```
+
+mrpp1: All variables (morphology + isotopes)
+A = 0.2482, p = 0.001
+
+Interpretation: There is strong evidence that penguins differ multivariately by island in terms of morphology and isotopic profile.
+
+Largest effect size of the three tests — shows that combining all traits leads to the strongest island-level differentiation.
+
+
+```{r}
+mrpp2 <- mrpp(continuous_vars[,1:2], data$Island)
+print(mrpp2)
+```
+
+mrpp2: Only bill traits (Culmen_Length, Culmen_Depth)
+A = 0.1162, p = 0.001
+Interpretation: Bill morphology differs significantly by island, but the effect size is smaller than for all traits combined.
+Conclusion: Culmen traits contribute to group separation but do not fully explain it.
+
+
+
+
+```{r}
+mrpp3 <- mrpp(continuous_vars[,5:6], data$Island)
+print(mrpp3)
+```
+mrpp3: Isotopic variables (Delta.15.N, Delta.13.C)
+A = 0.2244, p = 0.001
+
+Interpretation: Isotopic values differ significantly by island, with a relatively strong effect.
+This suggests dietary and trophic variation across habitats is a key driver of group separation.
+
+
+
+
+
+```{r}
+mrpp4 <- mrpp(continuous_vars[,5:6], data$Species)
+print(mrpp4)
+```
+
+```{r}
+interaction.plot(data$Sex, data$Species, data$Culmen_Length,
+  lwd=3, col=c("red", "blue", "black"), trace.label="Species", 
+  xlab="Island", main="Interaction Plot for Culmen_Length")
+```
+# Delta.15.N, Culmen_Depth, Culmen_Length
+```{r}
+interaction.plot(data$Species, data$Sex, data$Delta.15.N,
+  lwd=3, col=c("red", "blue", "black"), trace.label="Species", 
+  xlab="Island", main="Interaction Plot for Delta.15.N")
+```
+
+
+```{r}
+interaction.plot(data$Island, data$Species, data$Delta.15.N,
+  lwd=3, col=c("red", "blue", "black"), trace.label="Species", 
+  xlab="Island", main="Interaction Plot for Delta.15.N")
+```
+
+```{r}
+chart.Correlation(df_PCA[,-c(1,2,3)], main = "Penguin Data")
+```
+
+
+
+
+# Cluster Analysis (quite similar result which has been shown by PCA and DA, so NO)
+
+
+
+
+
+
+
